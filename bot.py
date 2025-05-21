@@ -12,11 +12,14 @@ from utils import analyze_text
 import docx2txt
 import PyPDF2
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CHOOSING, CORRECTING = range(2)
 user_sessions = {}
 
-CHANNEL_ID = "@mymanageee"
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 
 def sanitize_for_telegram(html_text: str) -> str:
@@ -60,7 +63,8 @@ async def ask_correction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cleaned = sanitize_for_telegram(session['corrected_text'])
         await update.message.reply_text(f"✅ Yakuniy to‘g‘rilangan matn:\n\n{cleaned}", parse_mode="HTML")
 
-        username = update.message.from_user.username or update.message.from_user.first_name or "Foydalanuvchi"
+        user = update.message.from_user
+        username = user.username or user.first_name or "Foydalanuvchi"
         await send_channel_message(context, f"✅ @{username} matn tahlilini yakunladi.")
         user_sessions.pop(user_id, None)
         return ConversationHandler.END
@@ -96,7 +100,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "current_index": 0,
     }
 
-    username = update.message.from_user.username or update.message.from_user.first_name or "Foydalanuvchi"
+    user = update.message.from_user
+    username = user.username or user.first_name or "Foydalanuvchi"
 
     if not mistakes:
         await update.message.reply_text("✅ Matnda xatolik topilmadi!")
@@ -192,12 +197,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(path)
 
 
+async def read_file_text(path, ext):
+    if ext == ".txt":
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    elif ext == ".docx":
+        return docx2txt.process(path)
+    else:  # .pdf
+        with open(path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            return "".join(page.extract_text() or "" for page in reader.pages)
+
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     file = await doc.get_file()
     _, ext = os.path.splitext(doc.file_name.lower())
 
-    if ext not in [".txt", ".docx", ".pdf"]:
+    if ext not in {".txt", ".docx", ".pdf"}:
         await update.message.reply_text("⚠️ Faqat .txt, .docx, .pdf fayllar qo‘llab-quvvatlanadi.")
         return
 
@@ -207,15 +224,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await file.download_to_drive(tmp.name)
             tmp_path = tmp.name
 
-        if ext == ".txt":
-            with open(tmp_path, "r", encoding="utf-8") as f:
-                text = f.read()
-        elif ext == ".docx":
-            text = docx2txt.process(tmp_path)
-        else:
-            with open(tmp_path, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
-                text = "".join(page.extract_text() or "" for page in reader.pages)
+        text = await read_file_text(tmp_path, ext)
 
         update.message.text = text.strip()
         return await handle_text(update, context)
@@ -234,7 +243,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    application = ApplicationBuilder().token("6154659750:AAEr-TpUsp_m6YnoqIm1YU8NHOYhV4kWsuc").build()
+    application = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
